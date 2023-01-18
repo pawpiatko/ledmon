@@ -870,6 +870,99 @@ ledctl_status_code_t slot_execute(struct slot_request *slot_req)
 	}
 }
 
+bool _cmdline_parse_major_params(int opt, int opt_index, struct slot_request *req)
+{
+	switch (opt) {
+	int log_level;
+
+	case 0:
+		switch (get_option_id(longopt[opt_index].name)) {
+		case OPT_LOG_LEVEL:
+			log_level = get_option_id(optarg);
+			if (log_level != -1)
+				set_verbose_level(log_level);
+			else
+				return false;
+			break;
+		default:
+			set_verbose_level(possible_params[opt_index]);
+		}
+		break;
+	case 'l':
+		set_log_path(optarg);
+		break;
+	case 'x':
+		listed_only = 1;
+		break;
+	
+	case ':':
+	case '?':
+	default:
+		return false;
+	}
+
+	return true;
+}
+
+void _cmdline_parse_modes(int opt, struct slot_request *req)
+{
+	switch (opt) {
+	case 'G':
+		req->chosen_opt = OPT_GET_SLOT;
+		break;
+	case 'P':
+		req->chosen_opt = OPT_LIST_SLOTS;
+		break;
+	case 'S':
+		req->chosen_opt = OPT_SET_SLOT;
+		break;
+	case 'L':
+	{
+		struct cntrl_device *ctrl_dev;
+
+		sysfs_init();
+		sysfs_scan();
+		list_for_each(sysfs_get_cntrl_devices(), ctrl_dev)
+			print_cntrl(ctrl_dev);
+		sysfs_reset();
+		exit(EXIT_SUCCESS);
+	}
+	default:
+		req->chosen_opt = OPT_NULL_ELEMENT;
+	}
+}
+
+bool _cmdline_parse_slots_params(int opt, struct slot_request *req)
+{
+	bool parsed = true;
+
+	switch (opt) {
+	case 'c':
+		req->cntrl = string_to_cntrl_type(optarg);
+		_get_slot_ctrl_fn(req->cntrl, req);
+		break;
+	case 's':
+	{
+		struct ibpi_state *state = _ibpi_state_get(optarg);
+
+		if (state)
+			req->state = state->ibpi;
+		free(state);
+		break;
+	}
+	case 'd':
+		strncpy(req->device, optarg, PATH_MAX - 1);
+		break;
+	case 'p':
+		strncpy(req->slot, optarg, PATH_MAX - 1);
+		break;
+	default:
+		parsed = false;
+	}
+
+	return parsed;
+}
+
 /**
  * @brief Command line parser - options.
  *
@@ -885,87 +978,38 @@ ledctl_status_code_t slot_execute(struct slot_request *slot_req)
 ledctl_status_code_t _cmdline_parse(int argc, char *argv[], struct slot_request *req)
 {
 	int opt, opt_index = -1;
-	ledctl_status_code_t status = LEDCTL_STATUS_SUCCESS;
-
 	optind = 1;
+	int _last_optind;
+	
+	opt = getopt_long(argc, argv, shortopt, longopt, &opt_index);
+	if (opt == -1)
+		return LEDCTL_STATUS_CMDLINE_ERROR;
+
+	_cmdline_parse_modes(opt, req);
+
+	if (req->chosen_opt == OPT_NULL_ELEMENT)
+		optind = 1;
 
 	do {
+		bool parsed = false;
+		_last_optind = optind;
 		opt = getopt_long(argc, argv, shortopt, longopt, &opt_index);
 		if (opt == -1)
 			break;
-		switch (opt) {
-		int log_level;
 
-		case 0:
-			switch (get_option_id(longopt[opt_index].name)) {
-			case OPT_LOG_LEVEL:
-				log_level = get_option_id(optarg);
-				if (log_level != -1)
-					status = set_verbose_level(log_level);
-				else
-					status = LEDCTL_STATUS_CMDLINE_ERROR;
-				break;
-			default:
-				status = set_verbose_level(
-						possible_params[opt_index]);
-
-			}
-			break;
-		case 'l':
-			status = set_log_path(optarg);
-			break;
-		case 'x':
-			status = LEDCTL_STATUS_SUCCESS;
-			listed_only = 1;
-			break;
-		case 'L':
-		{
-			struct cntrl_device *ctrl_dev;
-
-			sysfs_init();
-			sysfs_scan();
-			list_for_each(sysfs_get_cntrl_devices(), ctrl_dev)
-				print_cntrl(ctrl_dev);
-			sysfs_reset();
-			exit(EXIT_SUCCESS);
+		if (req->chosen_opt >= OPT_LIST_SLOTS && req->chosen_opt <= OPT_SET_SLOT) {
+			parsed = _cmdline_parse_slots_params(opt, req);
 		}
-		case 'G':
-			req->chosen_opt = OPT_GET_SLOT;
-			break;
-		case 'P':
-			req->chosen_opt = OPT_LIST_SLOTS;
-			break;
-		case 'S':
-			req->chosen_opt = OPT_SET_SLOT;
-			break;
-		case 'c':
-			req->cntrl = string_to_cntrl_type(optarg);
-			_get_slot_ctrl_fn(req->cntrl, req);
-			break;
-		case 's':
-		{
-			struct ibpi_state *state = _ibpi_state_get(optarg);
-
-			if (state)
-				req->state = state->ibpi;
-			free(state);
-			break;
-		}
-		case 'd':
-			strncpy(req->device, optarg, PATH_MAX - 1);
-			break;
-		case 'p':
-			strncpy(req->slot, optarg, PATH_MAX - 1);
-			break;
-		case ':':
-		case '?':
-		default:
-			log_debug("[opt='%c', opt_index=%d]", opt, opt_index);
+		
+		if (!parsed)
+		 	parsed = _cmdline_parse_major_params(opt, opt_index, req);
+				
+		if (!parsed) {
+			log_error("Cannot parse parameter '%s'.", argv[_last_optind]);
 			return LEDCTL_STATUS_CMDLINE_ERROR;
 		}
+
 		opt_index = -1;
-		if (status != LEDCTL_STATUS_SUCCESS)
-			return status;
 	} while (1);
 
 	return LEDCTL_STATUS_SUCCESS;
