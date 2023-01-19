@@ -235,6 +235,42 @@ static int possible_params[] = {
 	OPT_LOG_LEVEL,
 };
 
+static int possible_params_list_ctrl[] = {
+	OPT_LOG_LEVEL,
+	OPT_LOG,
+	OPT_LISTED_ONLY,
+	OPT_LIST_CTRL
+};
+
+static int possible_params_set_slot[] = {
+	OPT_LOG_LEVEL,
+	OPT_LOG,
+	OPT_LISTED_ONLY,
+	OPT_SET_SLOT,
+	OPT_CONTROLLER,
+	OPT_DEVICE,
+	OPT_SLOT,
+	OPT_STATE
+};
+
+static int possible_params_get_slot[] = {
+	OPT_LOG_LEVEL,
+	OPT_LOG,
+	OPT_LISTED_ONLY,
+	OPT_GET_SLOT,
+	OPT_CONTROLLER,
+	OPT_DEVICE,
+	OPT_SLOT
+};
+
+static int possible_params_list_slots[] = {
+	OPT_LOG_LEVEL,
+	OPT_LOG,
+	OPT_LISTED_ONLY,
+	OPT_LIST_SLOTS,
+	OPT_CONTROLLER
+};
+
 static const int possible_params_size = ARRAY_SIZE(possible_params);
 static int listed_only;
 
@@ -746,6 +782,9 @@ static void slot_response_init(struct slot_response *slot_res)
  */
 static ledctl_status_code_t slot_verify_request(struct slot_request *slot_req)
 {
+	if (slot_req->chosen_opt == OPT_LIST_CTRL) {
+		return LEDCTL_STATUS_SUCCESS;
+	}
 	if (slot_req->cntrl == CNTRL_TYPE_UNKNOWN) {
 		log_error("Invalid controller in the request.");
 		return LEDCTL_STATUS_INVALID_CONTROLLER;
@@ -865,6 +904,15 @@ ledctl_status_code_t slot_execute(struct slot_request *slot_req)
 		if (status == LEDCTL_STATUS_SUCCESS)
 			print_slot_state(&slot_res);
 		return status;
+	case OPT_LIST_CTRL:
+	{
+		struct cntrl_device *ctrl_dev;
+
+		list_for_each(sysfs_get_cntrl_devices(), ctrl_dev)
+			print_cntrl(ctrl_dev);
+		sysfs_reset();
+		exit(EXIT_SUCCESS);
+	}
 	default:
 		return LEDCTL_STATUS_NOT_SUPPORTED;
 	}
@@ -904,31 +952,32 @@ bool _cmdline_parse_major_params(int opt, int opt_index, struct slot_request *re
 	return true;
 }
 
-void _cmdline_parse_modes(int opt, struct slot_request *req)
+void _cmdline_parse_modes(int opt, char **shortopts, struct option **longopts,
+			  struct slot_request *req)
 {
 	switch (opt) {
 	case 'G':
 		req->chosen_opt = OPT_GET_SLOT;
+		setup_options(longopts, shortopts, possible_params_get_slot,
+			      ARRAY_SIZE(possible_params_get_slot));
 		break;
 	case 'P':
 		req->chosen_opt = OPT_LIST_SLOTS;
+		setup_options(longopts, shortopts, possible_params_list_slots,
+			      ARRAY_SIZE(possible_params_list_slots));
 		break;
 	case 'S':
 		req->chosen_opt = OPT_SET_SLOT;
+		setup_options(longopts, shortopts, possible_params_set_slot,
+			      ARRAY_SIZE(possible_params_set_slot));
 		break;
 	case 'L':
-	{
-		struct cntrl_device *ctrl_dev;
-
-		sysfs_init();
-		sysfs_scan();
-		list_for_each(sysfs_get_cntrl_devices(), ctrl_dev)
-			print_cntrl(ctrl_dev);
-		sysfs_reset();
-		exit(EXIT_SUCCESS);
-	}
+		req->chosen_opt = OPT_LIST_CTRL;
+		setup_options(longopts, shortopts, possible_params_list_ctrl,
+			      ARRAY_SIZE(possible_params_list_ctrl));
+		break;
 	default:
-		req->chosen_opt = OPT_NULL_ELEMENT;
+		req->chosen_opt = OPT_IBPI_MODE;
 	}
 }
 
@@ -981,19 +1030,22 @@ ledctl_status_code_t _cmdline_parse(int argc, char *argv[], struct slot_request 
 	optind = 1;
 	int _last_optind;
 	
+	char *shortopts;
+	struct option *longopts;
+
 	opt = getopt_long(argc, argv, shortopt, longopt, &opt_index);
 	if (opt == -1)
 		return LEDCTL_STATUS_CMDLINE_ERROR;
 
-	_cmdline_parse_modes(opt, req);
+	_cmdline_parse_modes(opt, &shortopts, &longopts, req);
 
-	if (req->chosen_opt == OPT_NULL_ELEMENT)
+	if (req->chosen_opt == OPT_IBPI_MODE)
 		optind = 1;
 
 	do {
 		bool parsed = false;
 		_last_optind = optind;
-		opt = getopt_long(argc, argv, shortopt, longopt, &opt_index);
+		opt = getopt_long(argc, argv, shortopts, longopts, &opt_index);
 		if (opt == -1)
 			break;
 

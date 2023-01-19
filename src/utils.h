@@ -453,7 +453,8 @@ enum opt {
 	OPT_DEVICE,
 	OPT_SLOT,
 	OPT_STATE,
-	OPT_NULL_ELEMENT
+	OPT_NULL_ELEMENT,
+	OPT_IBPI_MODE
 };
 
 extern struct option longopt_all[];
