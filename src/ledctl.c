@@ -205,14 +205,6 @@ const char *ibpi_str[] = {
 static char *ledctl_version = "Intel(R) Enclosure LED Control Application %s %s\n"
 			      "Copyright (C) 2009-2022 Intel Corporation.\n";
 
-/**
- * Internal variable of monitor service. It is used to help parse command line
- * short options.
- */
-static char *shortopt;
-
-struct option *longopt;
-
 static int possible_params[] = {
 	OPT_HELP,
 	OPT_LOG,
@@ -235,18 +227,21 @@ static int possible_params[] = {
 	OPT_LOG_LEVEL,
 };
 
+static int possible_params_modes[] = {
+	OPT_GET_SLOT,
+	OPT_SET_SLOT,
+	OPT_LIST_SLOTS,
+	OPT_LIST_CTRL
+};
+
 static int possible_params_list_ctrl[] = {
 	OPT_LOG_LEVEL,
-	OPT_LOG,
-	OPT_LISTED_ONLY,
-	OPT_LIST_CTRL
+	OPT_LOG
 };
 
 static int possible_params_set_slot[] = {
 	OPT_LOG_LEVEL,
 	OPT_LOG,
-	OPT_LISTED_ONLY,
-	OPT_SET_SLOT,
 	OPT_CONTROLLER,
 	OPT_DEVICE,
 	OPT_SLOT,
@@ -256,8 +251,6 @@ static int possible_params_set_slot[] = {
 static int possible_params_get_slot[] = {
 	OPT_LOG_LEVEL,
 	OPT_LOG,
-	OPT_LISTED_ONLY,
-	OPT_GET_SLOT,
 	OPT_CONTROLLER,
 	OPT_DEVICE,
 	OPT_SLOT
@@ -266,12 +259,9 @@ static int possible_params_get_slot[] = {
 static int possible_params_list_slots[] = {
 	OPT_LOG_LEVEL,
 	OPT_LOG,
-	OPT_LISTED_ONLY,
-	OPT_LIST_SLOTS,
 	OPT_CONTROLLER
 };
 
-static const int possible_params_size = ARRAY_SIZE(possible_params);
 static int listed_only;
 
 /**
@@ -724,10 +714,14 @@ static ledctl_status_code_t _cmdline_ibpi_parse(int argc, char *argv[])
 static ledctl_status_code_t _cmdline_parse_non_root(int argc, char *argv[])
 {
 	int opt_index, opt = -1;
-	ledctl_status_code_t status = LEDCTL_STATUS_SUCCESS;
+	char *shortopts;
+	struct option *longopts;
+	optind = 1;
+
+	setup_options(&longopts, &shortopts, possible_params, ARRAY_SIZE(possible_params));
 
 	do {
-		opt = getopt_long(argc, argv, shortopt, longopt, &opt_index);
+		opt = getopt_long(argc, argv, shortopts, longopts, &opt_index);
 		switch (opt) {
 		case 'v':
 			_ledctl_version();
@@ -737,11 +731,16 @@ static ledctl_status_code_t _cmdline_parse_non_root(int argc, char *argv[])
 			exit(EXIT_SUCCESS);
 		case ':':
 		case '?':
+			free(shortopts);
+			free(longopts);
 			return LEDCTL_STATUS_CMDLINE_ERROR;
 		}
 	} while (opt >= 0);
+	
+	free(shortopts);
+	free(longopts);
 
-	return status;
+	return LEDCTL_STATUS_SUCCESS;
 }
 
 /**
@@ -918,13 +917,14 @@ ledctl_status_code_t slot_execute(struct slot_request *slot_req)
 	}
 }
 
-bool _cmdline_parse_major_params(int opt, int opt_index, struct slot_request *req)
+bool _cmdline_parse_major_params(int opt, int opt_index, struct option *longopts,
+				 struct slot_request *req)
 {
 	switch (opt) {
 	int log_level;
 
 	case 0:
-		switch (get_option_id(longopt[opt_index].name)) {
+		switch (get_option_id(longopts[opt_index].name)) {
 		case OPT_LOG_LEVEL:
 			log_level = get_option_id(optarg);
 			if (log_level != -1)
@@ -978,13 +978,12 @@ void _cmdline_parse_modes(int opt, char **shortopts, struct option **longopts,
 		break;
 	default:
 		req->chosen_opt = OPT_IBPI_MODE;
+		setup_options(longopts, shortopts, possible_params, ARRAY_SIZE(possible_params));
 	}
 }
 
 bool _cmdline_parse_slots_params(int opt, struct slot_request *req)
 {
-	bool parsed = true;
-
 	switch (opt) {
 	case 'c':
 		req->cntrl = string_to_cntrl_type(optarg);
@@ -1006,10 +1005,10 @@ bool _cmdline_parse_slots_params(int opt, struct slot_request *req)
 		strncpy(req->slot, optarg, PATH_MAX - 1);
 		break;
 	default:
-		parsed = false;
+		return false;
 	}
 
-	return parsed;
+	return true;
 }
 
 /**
@@ -1026,14 +1025,15 @@ bool _cmdline_parse_slots_params(int opt, struct slot_request *req)
  */
 ledctl_status_code_t _cmdline_parse(int argc, char *argv[], struct slot_request *req)
 {
-	int opt, opt_index = -1;
-	optind = 1;
-	int _last_optind;
-	
+	int _last_optind, opt, opt_index = -1;
 	char *shortopts;
 	struct option *longopts;
+	optind = 1;
 
-	opt = getopt_long(argc, argv, shortopt, longopt, &opt_index);
+	setup_options(&longopts, &shortopts, possible_params_modes,
+		      ARRAY_SIZE(possible_params_modes));
+
+	opt = getopt_long(argc, argv, shortopts, longopts, &opt_index);
 	if (opt == -1)
 		return LEDCTL_STATUS_CMDLINE_ERROR;
 
@@ -1054,16 +1054,19 @@ ledctl_status_code_t _cmdline_parse(int argc, char *argv[], struct slot_request 
 		}
 		
 		if (!parsed)
-		 	parsed = _cmdline_parse_major_params(opt, opt_index, req);
+		 	parsed = _cmdline_parse_major_params(opt, opt_index, longopts, req);
 				
 		if (!parsed) {
 			log_error("Cannot parse parameter '%s'.", argv[_last_optind]);
+			free(longopts);
+			free(shortopts);
 			return LEDCTL_STATUS_CMDLINE_ERROR;
 		}
-
 		opt_index = -1;
 	} while (1);
 
+	free(longopts);
+	free(shortopts);
 	return LEDCTL_STATUS_SUCCESS;
 }
 
@@ -1183,8 +1186,6 @@ int main(int argc, char *argv[])
 	ledctl_status_code_t status;
 	struct slot_request slot_req;
 
-	setup_options(&longopt, &shortopt, possible_params,
-			possible_params_size);
 	set_invocation_name(argv[0]);
 
 	if (_cmdline_parse_non_root(argc, argv) != LEDCTL_STATUS_SUCCESS)
@@ -1206,8 +1207,6 @@ int main(int argc, char *argv[])
 	status = _cmdline_parse(argc, argv, &slot_req);
 	if (status != LEDCTL_STATUS_SUCCESS)
 		exit(LEDCTL_STATUS_CMDLINE_ERROR);
-	free(shortopt);
-	free(longopt);
 	status = _read_shared_conf();
 	if (status != LEDCTL_STATUS_SUCCESS)
 		return status;
