@@ -135,11 +135,11 @@ typedef status_t (*get_slot_t) (char *device, char *slot, struct slot_response *
 typedef status_t (*set_slot_t) (char *slot, enum ibpi_pattern state);
 
 /**
- * @brief slot request parametres
+ * @brief request parametres
  *
- * This structure contains all possible parameters for slot related commands.
+ * This structure contains all possible parameters for related commands.
  */
-struct slot_request {
+struct request {
 	/**
 	 * Option given in the request.
 	 */
@@ -271,24 +271,24 @@ static int listed_only;
  * controller type.
  *
  * @param[in]       ctrl_type       Controller type.
- * @param[in]       slot_req        Pointer to the slot request.
+ * @param[in]       req        Pointer to the request.
  *
  * @return This function does not return a value.
  */
-static void _get_slot_ctrl_fn(enum cntrl_type ctrl_type, struct slot_request *slot_req)
+static void _get_slot_ctrl_fn(enum cntrl_type ctrl_type, struct request *req)
 {
 	switch (ctrl_type) {
 	case CNTRL_TYPE_VMD:
-		slot_req->get_slot_fn = pci_get_slot;
-		slot_req->set_slot_fn = pci_set_slot;
+		req->get_slot_fn = pci_get_slot;
+		req->set_slot_fn = pci_set_slot;
 		break;
 	case CNTRL_TYPE_NPEM:
-		slot_req->get_slot_fn = npem_get_slot;
-		slot_req->set_slot_fn = npem_set_slot;
+		req->get_slot_fn = npem_get_slot;
+		req->set_slot_fn = npem_set_slot;
 		break;
 	case CNTRL_TYPE_SCSI:
-		slot_req->get_slot_fn = enclosure_get_slot;
-		slot_req->set_slot_fn = enclosure_set_slot;
+		req->get_slot_fn = enclosure_get_slot;
+		req->set_slot_fn = enclosure_set_slot;
 		break;
 	default:
 		log_debug("Slot functions could not be set because the controller type %s does not "
@@ -720,23 +720,21 @@ static ledctl_status_code_t _cmdline_parse_non_root(int argc, char *argv[])
 
 	setup_options(&longopts, &shortopts, possible_params, ARRAY_SIZE(possible_params));
 
-	do {
-		opt = getopt_long(argc, argv, shortopts, longopts, &opt_index);
-		switch (opt) {
-		case 'v':
-			_ledctl_version();
-			exit(EXIT_SUCCESS);
-		case 'h':
-			_ledctl_help();
-			exit(EXIT_SUCCESS);
-		case ':':
-		case '?':
-			free(shortopts);
-			free(longopts);
-			return LEDCTL_STATUS_CMDLINE_ERROR;
-		}
-	} while (opt >= 0);
-	
+	opt = getopt_long(argc, argv, shortopts, longopts, &opt_index);
+	switch (opt) {
+	case 'v':
+		_ledctl_version();
+		exit(EXIT_SUCCESS);
+	case 'h':
+		_ledctl_help();
+		exit(EXIT_SUCCESS);
+	case ':':
+	case '?':
+		free(shortopts);
+		free(longopts);
+		return LEDCTL_STATUS_CMDLINE_ERROR;
+	}
+
 	free(shortopts);
 	free(longopts);
 
@@ -744,18 +742,18 @@ static ledctl_status_code_t _cmdline_parse_non_root(int argc, char *argv[])
 }
 
 /**
- * @brief Inits slot request structure with initial values.
+ * @brief Inits request structure with initial values.
  *
- * @param[in]       slot_req       structure with slot request
+ * @param[in]       req       structure with request
  *
  * @return This function does not return a value.
  */
-static void slot_request_init(struct slot_request *slot_req)
+static void request_init(struct request *req)
 {
-	memset(slot_req, 0, sizeof(struct slot_request));
+	memset(req, 0, sizeof(struct request));
 
-	slot_req->chosen_opt = OPT_NULL_ELEMENT;
-	slot_req->state = IBPI_PATTERN_UNKNOWN;
+	req->chosen_opt = OPT_NULL_ELEMENT;
+	req->state = IBPI_PATTERN_UNKNOWN;
 }
 
 /**
@@ -773,31 +771,31 @@ static void slot_response_init(struct slot_response *slot_res)
 }
 
 /**
- * @brief Verifies slot request parameters.
+ * @brief Verifies request parameters.
  *
- * @param[in]       slot_req       structure with slot request
+ * @param[in]       req       structure with request
  *
  * @return LEDCTL_STATUS_SUCCESS if successful, otherwise ledctl_status_code_t.
  */
-static ledctl_status_code_t slot_verify_request(struct slot_request *slot_req)
+static ledctl_status_code_t verify_request(struct request *req)
 {
-	if (slot_req->chosen_opt == OPT_LIST_CTRL) {
+	if (req->chosen_opt == OPT_LIST_CTRL) {
 		return LEDCTL_STATUS_SUCCESS;
 	}
-	if (slot_req->cntrl == CNTRL_TYPE_UNKNOWN) {
+	if (req->cntrl == CNTRL_TYPE_UNKNOWN) {
 		log_error("Invalid controller in the request.");
 		return LEDCTL_STATUS_INVALID_CONTROLLER;
 	}
-	if (slot_req->chosen_opt == OPT_SET_SLOT && slot_req->state == IBPI_PATTERN_UNKNOWN) {
+	if (req->chosen_opt == OPT_SET_SLOT && req->state == IBPI_PATTERN_UNKNOWN) {
 		log_error("Invalid IBPI state in the request.");
 		return LEDCTL_STATUS_INVALID_STATE;
 	}
-	if (!slot_req->get_slot_fn && !slot_req->set_slot_fn) {
+	if (!req->get_slot_fn && !req->set_slot_fn) {
 		log_error("The controller type %s doesn't support slot functionality.",
-			cntrl_type_to_string(slot_req->cntrl));
+			cntrl_type_to_string(req->cntrl));
 		return LEDCTL_STATUS_INVALID_CONTROLLER;
 	}
-	if (slot_req->device[0] && slot_req->slot[0]) {
+	if (req->device[0] && req->slot[0]) {
 		log_error("Device and slot parameters are exclusive.");
 		return LEDCTL_STATUS_DATA_ERROR;
 	}
@@ -805,13 +803,13 @@ static ledctl_status_code_t slot_verify_request(struct slot_request *slot_req)
 	return LEDCTL_STATUS_SUCCESS;
 }
 
-static ledctl_status_code_t get_state_for_slot(char *slot, struct slot_request *slot_req)
+static ledctl_status_code_t get_state_for_slot(char *slot, struct request *req)
 {
 	struct slot_response slot_res;
 	ledctl_status_code_t status = LEDCTL_STATUS_SUCCESS;
 
 	slot_response_init(&slot_res);
-	status = slot_req->get_slot_fn(NULL, slot, &slot_res);
+	status = req->get_slot_fn(NULL, slot, &slot_res);
 	if (status == LEDCTL_STATUS_SUCCESS)
 		print_slot_state(&slot_res);
 
@@ -824,21 +822,21 @@ static ledctl_status_code_t get_state_for_slot(char *slot, struct slot_request *
  * This function scans all available slots connected to given controller
  * and prints their led states and names of the connected devices (if exist).
  *
- * @param[in]       slot_req       Structure with slot request.
+ * @param[in]       req       Structure with request.
  *
  * @return LEDCTL_STATUS_SUCCESS if successful, otherwise ledctl_status_code_t.
  */
-static ledctl_status_code_t list_slots(struct slot_request *slot_req)
+static ledctl_status_code_t list_slots(struct request *req)
 {
 	ledctl_status_code_t status = LEDCTL_STATUS_SUCCESS;
 
-	switch (slot_req->cntrl) {
+	switch (req->cntrl) {
 	case CNTRL_TYPE_VMD:
 	{
 		struct pci_slot *slot;
 
 		list_for_each(sysfs_get_pci_slots(), slot)
-			status = get_state_for_slot(slot->sysfs_path, slot_req);
+			status = get_state_for_slot(slot->sysfs_path, req);
 		return status;
 	}
 	case CNTRL_TYPE_NPEM:
@@ -848,7 +846,7 @@ static ledctl_status_code_t list_slots(struct slot_request *slot_req)
 		list_for_each(sysfs_get_cntrl_devices(), ctrl_dev) {
 			if (ctrl_dev->cntrl_type != CNTRL_TYPE_NPEM)
 				continue;
-			status = get_state_for_slot(ctrl_dev->sysfs_path, slot_req);
+			status = get_state_for_slot(ctrl_dev->sysfs_path, req);
 		}
 		return status;
 	}
@@ -859,7 +857,7 @@ static ledctl_status_code_t list_slots(struct slot_request *slot_req)
 		list_for_each(sysfs_get_enclosure_devices(), encl) {
 			for (int i = 0; i < encl->slots_count; i++) {
 				snprintf(slot_id, PATH_MAX, "%s/%d", encl->dev_path, encl->slots[i].index);
-				status = get_state_for_slot(slot_id, slot_req);
+				status = get_state_for_slot(slot_id, req);
 			}
 		}
 		return status;
@@ -872,34 +870,34 @@ static ledctl_status_code_t list_slots(struct slot_request *slot_req)
 /**
  * @brief Executes proper slot mode function.
  *
- * @param[in]       slot_req       Structure with slot request.
+ * @param[in]       req       Structure with request.
  *
  * @return LEDCTL_STATUS_SUCCESS if successful, otherwise ledctl_status_code_t.
  */
-ledctl_status_code_t slot_execute(struct slot_request *slot_req)
+ledctl_status_code_t slot_execute(struct request *req)
 {
 	struct slot_response slot_res;
 	ledctl_status_code_t status = LEDCTL_STATUS_SUCCESS;
 
 	slot_response_init(&slot_res);
 
-	switch (slot_req->chosen_opt) {
+	switch (req->chosen_opt) {
 	case OPT_LIST_SLOTS:
-		return list_slots(slot_req);
+		return list_slots(req);
 	case OPT_SET_SLOT:
-		status = slot_req->get_slot_fn(slot_req->device, slot_req->slot, &slot_res);
+		status = req->get_slot_fn(req->device, req->slot, &slot_res);
 		if (status != LEDCTL_STATUS_SUCCESS)
 			return status;
-		if (slot_res.state == slot_req->state) {
+		if (slot_res.state == req->state) {
 			log_warning("Led state: %s is already set for the slot.",
-				    ibpi2str(slot_req->state));
+				    ibpi2str(req->state));
 			return LEDCTL_STATUS_SUCCESS;
 		}
-		status = slot_req->set_slot_fn(slot_res.slot, slot_req->state);
+		status = req->set_slot_fn(slot_res.slot, req->state);
 		if (status != LEDCTL_STATUS_SUCCESS)
 			return status;
 	case OPT_GET_SLOT:
-		status = slot_req->get_slot_fn(slot_req->device, slot_req->slot, &slot_res);
+		status = req->get_slot_fn(req->device, req->slot, &slot_res);
 		if (status == LEDCTL_STATUS_SUCCESS)
 			print_slot_state(&slot_res);
 		return status;
@@ -918,7 +916,7 @@ ledctl_status_code_t slot_execute(struct slot_request *slot_req)
 }
 
 bool _cmdline_parse_major_params(int opt, int opt_index, struct option *longopts,
-				 struct slot_request *req)
+				 struct request *req)
 {
 	switch (opt) {
 	int log_level;
@@ -952,8 +950,7 @@ bool _cmdline_parse_major_params(int opt, int opt_index, struct option *longopts
 	return true;
 }
 
-void _cmdline_parse_modes(int opt, char **shortopts, struct option **longopts,
-			  struct slot_request *req)
+void _cmdline_parse_modes(int opt, char **shortopts, struct option **longopts, struct request *req)
 {
 	switch (opt) {
 	case 'G':
@@ -982,7 +979,7 @@ void _cmdline_parse_modes(int opt, char **shortopts, struct option **longopts,
 	}
 }
 
-bool _cmdline_parse_slots_params(int opt, struct slot_request *req)
+bool _cmdline_parse_slots_params(int opt, struct request *req)
 {
 	switch (opt) {
 	case 'c':
@@ -1020,10 +1017,11 @@ bool _cmdline_parse_slots_params(int opt, struct slot_request *req)
  *
  * @param[in]      argc           number of elements in argv array.
  * @param[in]      argv           command line arguments.
+ * @param[in]      req            Structure with request.
  *
  * @return LEDCTL_STATUS_SUCCESS if successful, otherwise ledctl_status_code_t.
  */
-ledctl_status_code_t _cmdline_parse(int argc, char *argv[], struct slot_request *req)
+ledctl_status_code_t _cmdline_parse(int argc, char *argv[], struct request *req)
 {
 	int _last_optind, opt, opt_index = -1;
 	char *shortopts;
@@ -1184,7 +1182,7 @@ static char *ledctl_strstatus(ledctl_status_code_t s)
 int main(int argc, char *argv[])
 {
 	ledctl_status_code_t status;
-	struct slot_request slot_req;
+	struct request req;
 
 	set_invocation_name(argv[0]);
 
@@ -1203,8 +1201,8 @@ int main(int argc, char *argv[])
 		return status;
 	if (on_exit(_ledctl_fini, progname))
 		exit(LEDCTL_STATUS_ONEXIT_ERROR);
-	slot_request_init(&slot_req);
-	status = _cmdline_parse(argc, argv, &slot_req);
+	request_init(&req);
+	status = _cmdline_parse(argc, argv, &req);
 	if (status != LEDCTL_STATUS_SUCCESS)
 		exit(LEDCTL_STATUS_CMDLINE_ERROR);
 	status = _read_shared_conf();
@@ -1219,10 +1217,10 @@ int main(int argc, char *argv[])
 	list_init(&ibpi_list, (item_free_t)ibpi_state_fini);
 	sysfs_init();
 	sysfs_scan();
-	if (slot_req.chosen_opt != OPT_NULL_ELEMENT) {
-		status = slot_verify_request(&slot_req);
+	if (req.chosen_opt != OPT_NULL_ELEMENT) {
+		status = verify_request(&req);
 		if (status == LEDCTL_STATUS_SUCCESS)
-			return slot_execute(&slot_req);
+			return slot_execute(&req);
 		else
 			exit(status);
 	}
